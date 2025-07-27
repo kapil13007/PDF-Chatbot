@@ -43,7 +43,7 @@ if not supabase_url or not supabase_key:
     raise Exception("Supabase URL and Key must be set in the environment variables.")
 
 supabase: Client = create_client(supabase_url, supabase_key)
-embeddings = HuggingFaceEmbeddings(model_name="hkunlp/instructor-xl")
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # --- Pydantic Models for API requests/responses ---
 class ChatRequest(BaseModel):
