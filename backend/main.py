@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
-# --- All other imports are the same ---
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -19,9 +18,8 @@ from supabase.client import Client, create_client
 load_dotenv()
 app = FastAPI()
 
-origins = [
-    "http://localhost:3000",
-]
+# Add your Vercel URL here later when you deploy the frontend
+origins = [ "http://localhost:3000" ]
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,19 +29,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Initialize Supabase and Embeddings ---
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-if not supabase_url or not supabase_key:
-    raise Exception("Supabase URL and Key must be set in the environment variables.")
-
 supabase: Client = create_client(supabase_url, supabase_key)
-
-# Using the smaller model
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# --- Pydantic Models ---
 class ChatRequest(BaseModel):
     question: str
     session_id: str
@@ -55,7 +45,6 @@ class UploadResponse(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
 
-# --- Helper Functions ---
 def get_pdf_text(pdf_docs: List[UploadFile]) -> str:
     text = ""
     for pdf in pdf_docs:
@@ -70,7 +59,6 @@ def get_text_chunks(raw_text: str) -> List[str]:
     )
     return text_splitter.split_text(raw_text)
 
-# --- API Endpoints with DEBUGGING ADDED ---
 @app.post("/upload", response_model=UploadResponse)
 async def upload_files(pdf_docs: List[UploadFile] = File(...)):
     print("--- DEBUG: UPLOAD ENDPOINT HIT ---")
@@ -103,14 +91,12 @@ async def upload_files(pdf_docs: List[UploadFile] = File(...)):
 
         return {"message": "Files processed and stored successfully.", "session_id": session_id}
     except Exception as e:
-        # If a normal Python error occurs, this will catch it and print it to the logs
         print(f"--- DEBUG: AN EXCEPTION OCCURRED ---")
         print(f"--- ERROR DETAILS: {str(e)} ---")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# ... (The rest of your code, /chat and / endpoint, remains the same) ...
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
@@ -120,6 +106,7 @@ async def chat(request: ChatRequest):
             table_name="documents",
             query_name="match_documents",
         )
+        # THIS IS THE CORRECTED LINE
         retriever = vector_store.as_retriever(
             search_kwargs={'filter': {'session_id': request.session_id}}
         )
