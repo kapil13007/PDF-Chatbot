@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
+# --- All other imports are the same ---
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -15,16 +16,11 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain_groq import ChatGroq
 from supabase.client import Client, create_client
 
-# Load environment variables from .env file
 load_dotenv()
-
-# --- Initialize FastAPI App and CORS ---
 app = FastAPI()
 
-# IMPORTANT: When you deploy your frontend, add its URL here
 origins = [
-    "http://localhost:3000", # For local React development
-    # e.g., "https://my-pdf-chat-app.vercel.app" 
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
@@ -43,9 +39,11 @@ if not supabase_url or not supabase_key:
     raise Exception("Supabase URL and Key must be set in the environment variables.")
 
 supabase: Client = create_client(supabase_url, supabase_key)
+
+# Using the smaller model
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# --- Pydantic Models for API requests/responses ---
+# --- Pydantic Models ---
 class ChatRequest(BaseModel):
     question: str
     session_id: str
@@ -57,7 +55,7 @@ class UploadResponse(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
 
-# --- Helper Functions (No changes here) ---
+# --- Helper Functions ---
 def get_pdf_text(pdf_docs: List[UploadFile]) -> str:
     text = ""
     for pdf in pdf_docs:
@@ -72,63 +70,67 @@ def get_text_chunks(raw_text: str) -> List[str]:
     )
     return text_splitter.split_text(raw_text)
 
-# --- Updated API Endpoints ---
+# --- API Endpoints with DEBUGGING ADDED ---
 @app.post("/upload", response_model=UploadResponse)
 async def upload_files(pdf_docs: List[UploadFile] = File(...)):
+    print("--- DEBUG: UPLOAD ENDPOINT HIT ---")
     if not pdf_docs:
         raise HTTPException(status_code=400, detail="No PDF files uploaded.")
     
-    # This ID will link all chunks from this upload session together
     session_id = str(uuid.uuid4())
     
     try:
+        print("--- DEBUG: STEP 1 - EXTRACTING TEXT FROM PDFS ---")
         raw_text = get_pdf_text(pdf_docs)
-        text_chunks = get_text_chunks(raw_text)
+        print(f"--- DEBUG: STEP 1 SUCCESS - Extracted {len(raw_text)} characters ---")
         
-        # Add the session_id to each chunk's metadata
+        print("--- DEBUG: STEP 2 - CHUNKING TEXT ---")
+        text_chunks = get_text_chunks(raw_text)
+        print(f"--- DEBUG: STEP 2 SUCCESS - Created {len(text_chunks)} chunks ---")
+        
         metadata = [{"session_id": session_id} for _ in text_chunks]
         
-        # Store embeddings in the 'documents' table in Supabase
+        print("--- DEBUG: STEP 3 - STORING EMBEDDINGS IN SUPABASE ---")
         SupabaseVectorStore.from_texts(
             texts=text_chunks,
             embedding=embeddings,
             client=supabase,
             table_name="documents",
-            query_name="match_documents", # This is the DB function we created
+            query_name="match_documents",
             metadata=metadata
         )
+        print("--- DEBUG: STEP 3 SUCCESS - Embeddings stored in Supabase ---")
 
         return {"message": "Files processed and stored successfully.", "session_id": session_id}
     except Exception as e:
+        # If a normal Python error occurs, this will catch it and print it to the logs
+        print(f"--- DEBUG: AN EXCEPTION OCCURRED ---")
+        print(f"--- ERROR DETAILS: {str(e)} ---")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+# ... (The rest of your code, /chat and / endpoint, remains the same) ...
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        # Initialize the vector store to retrieve data from Supabase
         vector_store = SupabaseVectorStore(
             client=supabase,
             embedding=embeddings,
             table_name="documents",
             query_name="match_documents",
         )
-
-        # Create a retriever that ONLY looks for documents matching the specific session_id
         retriever = vector_store.as_retriever(
             search_kwargs={'filter': {'session_id': request.session_id}}
         )
-
         llm = ChatGroq(
             api_key=os.getenv("GROQ_API_KEY"), model_name="llama3-8b-8192", temperature=0.5
         )
-        
-        # Create the conversation chain on-the-fly for each request
         conversation_chain = ConversationalRetrievalChain.from_llm(
             llm=llm,
             retriever=retriever,
             memory=ConversationBufferMemory(memory_key='chat_history', return_messages=True)
         )
-        
         response = conversation_chain.invoke({'question': request.question})
         return {"answer": response['answer']}
     except Exception as e:
